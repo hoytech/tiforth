@@ -1,0 +1,917 @@
+.list
+#define equ .equ
+#define EQU .equ
+#define end .end
+#include ti83plus.inc
+.nolist
+
+;# This file is meant to be preprocessed with m4 and then compiled with TASM
+
+;# Register usage:
+;# z80      Forth
+;#---------------
+;# HL  <->  W
+;# DE  <->  IP
+;# SP  <->  PSP
+;# IX  <->  RSP
+;# BC  <->  TOS
+
+
+;# ------------------------------Various settings:
+
+;# These are the stack sizes:
+define(PSP_STACK_SIZE,100)
+define(RSP_STACK_SIZE,100)
+;# Number of bytes of user dict space.
+define(USER_DICT_SIZE,6000)
+;# Max number of bytes a user can type in on a line.
+define(QUERY_BUFFER_SIZE,50)
+define(TOTAL_SIZE,`eval(PSP_STACK_SIZE+RSP_STACK_SIZE+QUERY_BUFFER_SIZE+USER_DICT_SIZE)')
+
+define(FLAG_NORMAL,0)
+define(FLAG_IMMEDIATE,1)
+
+
+
+;# ------------------------------Default Assembler directives:
+
+;# The last word in the dictionary will be linked to this:
+LASTLINK = 0
+
+
+
+;# ------------------------------Various system macros:
+
+define(getfpscells,`eval(($1/9)+(($1%9)>0))')
+
+define(makeCodeWord,`
+`L_'$1`:'
+      .dw LASTLINK
+LASTLINK .set ($ - 2)
+      .db $3
+      .db decr(decr(len($2))),$2
+`C_'$1`:'')
+
+define(makeCodeWordLen,`
+`L_'$1`:'
+      .dw LASTLINK
+LASTLINK .set ($ - 2)
+      .db $3
+      .db $4,$2
+`C_'$1`:'')
+
+define(makeHighWord,`makeCodeWord($1,$2,$3)
+      jp C_DOCOLON')
+define(makeHighWordLen,`makeCodeWordLen($1,$2,$3,$4)
+      jp C_DOCOLON')
+define(makeConst,`makeCodeWord($1,$2,$3)
+      jp C_DOCONST')
+define(makeVar,`makeCodeWord($1,$2,$3)
+      jp C_DOVAR')
+
+define(NEXT,` jp C_NEXT')
+define(DOEXIT,` .dw C_EXIT')
+define(bcall,`RST 28h \ .dw $1')
+
+
+;# ------------------------------Entry point:
+
+      .org    $9D93   ; beginning of an 83+ application's memory
+      .db     $BB,$6D ; 83+ magic numbers
+
+      bcall(_runindicoff) ;# Turn off that damn run indicator :)
+
+      ld (OLD_SP),sp ;# Backup SP
+
+      ;# We allocate enough space and then immediatley deallocate it on the
+      ;# Floating Point Stack to make sure we have enough available memory:
+
+      ld hl,getfpscells(TOTAL_SIZE)
+      bcall(_allocfps)
+      ld hl,getfpscells(TOTAL_SIZE)
+      bcall(_deallocfps)
+
+      ld hl,(fps)
+
+      ld de,PSP_STACK_SIZE
+      add hl,de
+      ld (PSP_STACK_BASE),hl
+
+      ld de,RSP_STACK_SIZE
+      add hl,de
+      ld (RSP_STACK_BASE),hl
+
+      ld (QUERY_BUFFER_BASE),hl
+      ld de,QUERY_BUFFER_SIZE
+      add hl,de
+
+      ld (USER_DICT_BASE),hl
+      ld de,USER_DICT_SIZE
+      add hl,de
+
+
+      ;# Print a greeting:
+      ld hl,GREETING
+      bcall(_puts)
+      bcall(_newline)
+
+
+      ;# Load the stack addrs into appropriate registers:
+      ld sp,(PSP_STACK_BASE)
+      ld ix,(RSP_STACK_BASE)
+
+      ld bc,0  ; TOS
+      ld hl,0  ; W
+      ld de,MAIN_ENTRANCE_POINT  ; IP
+
+      NEXT
+
+
+;# ------------------------------Various pieces of memory for system use:
+
+OLD_SP:
+      .dw 0
+QUERY_BUFFER_BASE:
+      .dw 0
+GREETING:
+      .db "TIFORTH 2003:",0
+
+
+;# ------------------------------Dictionary:
+
+;# ------------------------------FUNDAMENTAL WORDS:
+C_NEXT:
+      ex de,hl
+      ; Load thread stored at IP into W and increase IP to the next cell:
+      ld e,(hl)
+      inc hl
+      ld d,(hl)
+      inc hl
+      ex de,hl
+      ; Jump to the CFA of the thread in W:
+      jp (hl)
+
+
+C_DOCOLON:
+      ; Save IP on return stack:
+      dec ix
+      ld (ix+0),d
+      dec ix
+      ld (ix+0),e
+      ; Increase W to the beginning of the thread:
+      inc hl
+      inc hl
+      inc hl
+      ; Put W into IP:
+      ex de,hl
+      NEXT
+
+
+C_DOCONST:
+      push bc
+      inc hl
+      inc hl
+      inc hl
+      ld c,(hl)
+      inc hl
+      ld b,(hl)
+      NEXT
+
+
+C_DOVAR:
+      push bc
+      inc hl
+      inc hl
+      inc hl
+      ld c,l
+      ld b,h
+      NEXT
+
+
+makeCodeWord(`EXIT',"EXIT",FLAG_NORMAL)
+      ; Pop a value off the return stack and store it in IP:
+      ld e,(ix+0)
+      inc ix
+      ld d,(ix+0)
+      inc ix
+      NEXT
+
+
+
+;# ------------------------------CORE PRIMITIVES:
+
+makeCodeWord(BYE,"BYE",FLAG_NORMAL)
+      ; Back to TI-OS:
+      ld sp,(OLD_SP)
+      ret
+
+makeCodeWord(RESET,"RESET",FLAG_NORMAL)
+      ld sp,(PSP_STACK_BASE)
+      ld ix,(RSP_STACK_BASE)
+      ;ld hl,0
+      ;ld (STATE_VAR),hl
+      ;ld (STATE_VAR+1),hl
+      NEXT
+
+makeCodeWord(STACKS,"STACKS",FLAG_NORMAL)
+      ld (STACKS_TP),sp
+      push bc
+      ld bc,(STACKS_TP)
+      ld hl,(PSP_STACK_BASE)
+      dec bc
+      dec bc
+      sbc hl,bc
+      pop bc
+      jr c,STACKS_UNDERFLOW
+
+      ld (STACKS_TP),ix
+      push bc
+      ld bc,(STACKS_TP)
+      ld hl,(RSP_STACK_BASE)
+      dec bc
+      dec bc
+      sbc hl,bc
+      pop bc
+      jr c,STACKS_UNDERFLOW
+
+      NEXT
+STACKS_UNDERFLOW:
+      bcall(_newline)
+      ld hl,STACKS_ERRMSG
+      bcall(_puts)
+
+      ld hl,C_QUIT
+      jp (hl)
+
+      NEXT
+STACKS_TP:
+      .dw 0
+STACKS_ERRMSG:
+      .db "STACK UNDERFLOW ",0
+
+
+makeCodeWord(DUP,"DUP",FLAG_NORMAL)
+      push bc
+      NEXT
+
+makeCodeWord(2DUP,"2DUP",FLAG_NORMAL)
+      ;# FIXME: Optimize this pop/push pair.. Something like ld hl,(sp)  ?
+      pop hl
+      push hl
+      push bc
+      push hl
+      NEXT
+
+makeCodeWord(3DUP,"3DUP",FLAG_NORMAL)
+      pop hl
+      pop af
+
+      push af
+      push hl
+      push bc
+      push af
+      push hl
+      NEXT
+
+makeCodeWord(DROP,"DROP",FLAG_NORMAL)
+      pop bc
+      NEXT
+
+makeCodeWord(2DROP,"2DROP",FLAG_NORMAL)
+      pop bc
+      pop bc
+      NEXT
+
+makeCodeWord(SWAP,"SWAP",FLAG_NORMAL)
+      pop hl
+      push bc
+      ld c,l
+      ld b,h
+      NEXT
+
+makeCodeWord(ROT,"ROT",FLAG_NORMAL)
+      pop hl
+      pop af
+      push bc
+      push af
+      push hl
+      pop bc
+      NEXT
+
+makeCodeWord(TUCK,"TUCK",FLAG_NORMAL)
+      pop hl
+      push bc
+      push hl
+      NEXT
+
+makeCodeWord(OVER,"OVER",FLAG_NORMAL)
+      pop hl
+      push hl
+      push bc
+      ld c,l
+      ld b,h
+      NEXT
+
+makeCodeWord(NIP,"NIP",FLAG_NORMAL)
+      inc sp
+      inc sp
+      NEXT
+
+makeCodeWord(I,"I",FLAG_NORMAL)
+      push bc
+      ld c,(ix+0)
+      ld b,(ix+1)
+      NEXT
+makeCodeWord(ITICK,"I'",FLAG_NORMAL)
+      push bc
+      ld c,(ix+2)
+      ld b,(ix+3)
+      NEXT
+makeCodeWord(J,"J",FLAG_NORMAL)
+      push bc
+      ld c,(ix+4)
+      ld b,(ix+5)
+      NEXT
+makeCodeWord(JTICK,"J'",FLAG_NORMAL)
+      push bc
+      ld c,(ix+6)
+      ld b,(ix+7)
+      NEXT
+
+
+makeCodeWord(CMOVE,"CMOVE",FLAG_NORMAL)
+      ;# BACKUP DE ON RETURN STACK:
+      dec ix
+      ld (ix+0),d
+      dec ix
+      ld (ix+0),e
+
+      pop de
+      pop hl
+      ld a,b
+      or c
+      jr z,CMOVE_BYE
+      ldir
+CMOVE_BYE:
+      ;# RESTORE DE:
+      ld e,(ix+0)
+      inc ix
+      ld d,(ix+0)
+      inc ix
+      pop bc
+      NEXT
+
+makeHighWord(BL,"BL",FLAG_NORMAL)
+      .dw C_LIT,' '
+      DOEXIT
+
+
+makeCodeWord(EQUAL,"=",FLAG_NORMAL)
+      pop hl
+      ld a,b
+      cp h
+      jr nz,EQUAL_NO
+      ld a,c
+      cp l
+      jr nz,EQUAL_NO
+      ;# Otherwise:
+      ld bc,1
+      NEXT
+EQUAL_NO:
+      ld bc,0
+      NEXT
+
+makeCodeWord(0EQUAL,"0=",FLAG_NORMAL)
+      ld a,0
+      cp b
+      jr nz,ZEQ_0
+      cp c
+      jr nz,ZEQ_0
+;# OTHERWISE:
+      ld bc,1
+      NEXT
+ZEQ_0:
+      ld bc,0
+      NEXT
+
+
+;# ( n1 n2 -- b )
+makeCodeWord(LT,"<",FLAG_NORMAL)
+      pop hl
+      sbc hl,bc
+
+      jp pe,LT_YES
+      jp p,LT_NO
+
+      jr LT_YES
+
+LT_MAYBE:
+      jp m,LT_NO
+LT_YES
+      ld bc,1
+      NEXT
+LT_NO:
+      ld bc,0
+      NEXT
+
+
+makeHighWord(GT,">",FLAG_NORMAL)
+      .dw C_SWAP,C_LT
+      DOEXIT
+
+
+makeHighWord(NOTEQUAL,"<>",FLAG_NORMAL)
+      .dw C_EQUAL,C_0EQUAL
+      DOEXIT
+
+makeHighWord(GTEQ,">=",FLAG_NORMAL)
+      .dw C_LT,C_0EQUAL
+      DOEXIT
+
+makeHighWord(LTEQ,"<=",FLAG_NORMAL)
+      .dw C_GT,C_0EQUAL
+      DOEXIT
+
+
+makeCodeWord(FETCH,"@",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      ld c,(hl)
+      inc hl
+      ld b,(hl)
+      NEXT
+
+makeCodeWord(STORE,"!",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      pop bc
+      ld (hl),c
+      inc hl
+      ld (hl),b
+      pop bc
+      NEXT
+
+
+makeHighWord(PLUSSTORE,"+!",FLAG_NORMAL)
+      .dw C_DUP,C_FETCH,C_ROT,C_ROT,C_PLUS,C_SWAP,C_STORE
+      DOEXIT
+
+
+makeCodeWord(CFETCH,"C@",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      ld c,(hl)
+      ld b,0
+      NEXT
+
+makeCodeWord(CSTORE,"C!",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      pop bc
+      ld (hl),c
+      pop bc
+      NEXT
+
+makeHighWord(NEGATE,"NEGATE",FLAG_NORMAL)
+      .dw C_NEGONE,C_MULT
+      DOEXIT
+
+makeCodeWord(1PLUS,"1+",FLAG_NORMAL)
+      inc bc
+      NEXT
+
+makeCodeWord(1MINUS,"1-",FLAG_NORMAL)
+      dec bc
+      NEXT
+
+makeCodeWord(PLUS,"+",FLAG_NORMAL)
+      pop hl
+      add hl,bc
+      ld c,l
+      ld b,h
+      NEXT
+
+makeCodeWord(MINUS,"-",FLAG_NORMAL)
+      pop hl
+      sbc hl,bc
+      ld c,l
+      ld b,h
+      NEXT
+
+;# The code in the following word "/MOD" has been adapted from:
+;# CamelForth for the Zilog Z80
+;# (c) 1994 Bradford J. Rodriguez
+makeCodeWord(SLASHMOD,"/MOD",FLAG_NORMAL)
+      ;# BACKUP DE ON RETURN STACK:
+      dec ix
+      ld (ix+0),d
+      dec ix
+      ld (ix+0),e
+
+      ld hl,0
+      pop de
+
+      ld a,16     ; loop counter
+      sla e
+      rl d        ; hi bit DE -> carry
+SLASHMOD_LOOP:
+      adc hl,hl   ; rot left w/ carry
+      jr nc,SLASHMOD_UDIV3
+      ; case 1: 17 bit, cy:HL = 1xxxx
+      or a        ; we know we can subtract
+      sbc hl,bc
+      or a        ; clear cy to indicate sub ok
+      jr SLASHMOD_UDIV4
+      ; case 2: 16 bit, cy:HL = 0xxxx
+SLASHMOD_UDIV3:
+      sbc hl,bc   ; try the subtract
+      jr nc,SLASHMOD_UDIV4 ; if no cy, subtract ok
+      add hl,bc   ; else cancel the subtract
+      scf         ;   and set cy to indicate
+SLASHMOD_UDIV4:
+      rl e        ; rotate result bit into DE,
+      rl d        ; and next bit of DE into cy
+      dec a
+      jr nz,SLASHMOD_LOOP
+      ; now have complemented quotient in DE,
+      ; and remainder in HL
+      ld a,d
+      cpl
+      ld b,a
+      ld a,e
+      cpl
+      ld c,a
+      push hl     ; push remainder
+
+      ;# RESTORE DE:
+      ld e,(ix+0)
+      inc ix
+      ld d,(ix+0)
+      inc ix
+
+      NEXT
+
+makeHighWord(SLASH,"/",FLAG_NORMAL)
+      .dw C_SLASHMOD,C_NIP
+      DOEXIT
+
+makeHighWord(MOD,"MOD",FLAG_NORMAL)
+      .dw C_SLASHMOD,C_DROP
+      DOEXIT
+
+
+makeCodeWord(MULT,"*",FLAG_NORMAL)
+      pop hl
+      push de
+      ex de,hl
+      ld hl,0
+      ld a,17
+      or a
+MULT_LOOP:
+      rr h
+      rr l
+      rr d
+      rr e
+      jr nc,MULT_NOADD
+      add hl,bc
+MULT_NOADD:
+      dec a
+      jr nz,MULT_LOOP
+      ex de,hl
+      pop de
+      ld c,l
+      ld b,h
+      NEXT
+
+makeCodeWord(EXECUTE,"EXECUTE",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      pop bc
+
+      jp (hl)
+      NEXT
+
+makeCodeWord(ISIMMED,"ISIMMED",FLAG_NORMAL)
+      ;# Relocate the addr in TOS to the FLAG byte and store it in hl:
+      ld l,c
+      ld h,b
+      inc hl
+      inc hl
+      ;# Compare (hl) to FLAG_IMMEDIATE and store it in bc:
+      ld a,FLAG_IMMEDIATE
+      and (hl)
+      ld c,a
+      ld b,0
+      NEXT
+
+makeHighWord(IMMEDIATE,"IMMEDIATE",FLAG_NORMAL)
+      ;# FIXME: Make this "OR" the immediate flag into the word.
+      .dw C_LIT,FLAG_IMMEDIATE,C_L,C_FETCH,C_1PLUS,C_1PLUS,C_CSTORE
+      DOEXIT
+
+makeCodeWord(TO_CODE,">CODE",FLAG_NORMAL)
+      ;# Relocate the addr in TOS to the name length byte and store it in hl:
+      ld l,c
+      ld h,b
+      inc hl
+      inc hl
+      inc hl
+      ;# Add the contents of the name length byte to the address and store it in bc:
+      ld b,0
+      ld c,(hl)
+      add hl,bc
+      inc hl
+      ld b,h
+      ld c,l
+      NEXT
+
+makeCodeWord(TO_R,">R",FLAG_NORMAL)
+      dec ix
+      ld (ix+0),b
+      dec ix
+      ld (ix+0),c
+      pop bc
+      NEXT
+
+makeCodeWord(R_TO,"R>",FLAG_NORMAL)
+      push bc
+      ld c,(ix+0)
+      inc ix
+      ld b,(ix+0)
+      inc ix
+      NEXT
+
+;# These headers had to be expanded because m4 has a problem with the string `","'...
+makeCodeWord(COMMA,"```,'''",FLAG_NORMAL)
+      ld hl,(H_VAR)
+      ld (hl),c
+      inc hl
+      ld (hl),b
+      inc hl
+      ld (H_VAR),hl
+      pop bc
+      NEXT
+
+makeCodeWord(CCOMMA,"C```,'''",FLAG_NORMAL)
+      ld hl,(H_VAR)
+      ld (hl),c
+      inc hl
+      ld (H_VAR),hl
+      pop bc
+      NEXT
+
+
+makeCodeWord(COMPILE,"COMPILE",FLAG_NORMAL)
+      push bc
+
+      ;# Get (IP) and increment IP in the process
+      ex de,hl
+      ld c,(hl)
+      inc hl
+      ld b,(hl)
+      inc hl
+      ex de,hl
+
+      ;# Compile the old (IP) into dictionary.
+      ld hl,(H_VAR)
+      ld (hl),c
+      inc hl
+      ld (hl),b
+      inc hl
+      ld (H_VAR),hl
+
+      pop bc
+      NEXT
+
+
+makeCodeWord(PAGE,"PAGE",FLAG_NORMAL)
+      push de
+      push bc
+      push ix
+      bcall(_clrlcdfull)
+      pop ix
+      pop bc
+      pop de
+      NEXT
+
+
+makeCodeWord(XY,"XY",FLAG_NORMAL)
+      ld (currow),bc
+      pop bc
+      ld (curcol),bc
+      pop bc
+      NEXT
+
+
+;# A "Zero-Terminated TYPE"
+makeCodeWord(ZTYPE,"ZTYPE",FLAG_NORMAL)
+      ld l,c
+      ld h,b
+      bcall(_puts)
+      pop bc
+      NEXT
+
+
+makeCodeWord(TYPE,"TYPE",FLAG_NORMAL)
+      pop hl
+
+TYPE_LOOP:
+      ld a,c
+      or b
+      cp 0
+      jr z,TYPE_BYE
+      ld a,(hl)
+      bcall(_putc)
+      dec c
+      inc hl
+      jr TYPE_LOOP
+
+TYPE_BYE:
+      pop bc
+
+      NEXT
+
+
+
+;# ( addr1 addr2 u -- 0|1 )
+makeCodeWord(S_EQUAL,"S=",FLAG_NORMAL)
+      pop hl
+      pop af
+      push de
+      push af
+      pop de
+      ;# We now have de backed up on the stack, hl=addr2 de=addr1 bc=u
+      ld b,c
+S_EQUAL_LOOP:
+      ld a,(de)
+      cp (hl)
+      jr nz, S_EQUAL_NO
+      inc hl
+      inc de
+      djnz S_EQUAL_LOOP
+
+      ;# Woohoo! It's equal!
+      pop de
+      ld bc,1
+      NEXT
+S_EQUAL_NO:
+      pop de
+      ld bc,0
+      NEXT
+
+makeHighWord(HERE,"HERE",FLAG_NORMAL)
+      .dw C_H,C_FETCH
+      DOEXIT
+
+makeHighWord(LAST,"LAST",FLAG_NORMAL)
+      .dw C_L,C_FETCH
+      DOEXIT
+
+
+makeCodeWord(BRA,"BRA",FLAG_NORMAL)
+      ; Load address stored at current IP into IP
+      ex de,hl
+      ld e,(hl)
+      inc hl
+      ld d,(hl)
+      inc hl
+      NEXT
+
+
+makeCodeWord(TBRA,"TBRA",FLAG_NORMAL)
+      ; Compare low byte:
+      ld a,0
+      cp c
+      jr nz,TBRA_DOJUMP
+      ; Compare high byte:
+      cp b
+      jr z,TBRA_NOJUMP
+TBRA_DOJUMP:
+      ; Load address stored at current IP into IP
+      ex de,hl
+      ld e,(hl)
+      inc hl
+      ld d,(hl)
+      inc hl
+      pop bc
+      NEXT
+TBRA_NOJUMP:
+      ; Skip over next cell
+      inc de
+      inc de
+      pop bc
+      NEXT
+;# DO NOT SEPARATE THESE 2!!
+makeCodeWord(FBRA,"FBRA",FLAG_NORMAL)
+      ; Compare low byte:
+      ld a,0
+      cp c
+      jr nz,TBRA_NOJUMP
+      ; Compare high byte:
+      cp b
+      jr nz,TBRA_NOJUMP
+      jr TBRA_DOJUMP
+      ;# Don't need NEXT here...
+
+
+makeCodeWord(LIT,"LIT",FLAG_NORMAL)
+      push bc ; Push old TOS
+      ; Load inline literal stored at IP into W and increase IP to the next cell:
+      ex de,hl
+      ld c,(hl)
+      inc hl
+      ld b,(hl)
+      inc hl
+      ex de,hl
+      NEXT
+
+
+
+
+
+;# ------------------------------INPUT/OUTPUT PRIMITIVES:
+
+makeCodeWord(KEY,"KEY",FLAG_NORMAL)
+
+      ; The GetKey ROM routine fucks our IP and W (fortunatley we don't need W)...
+      push de
+      bcall(_getkey)
+      pop de
+
+      ; Push TOS and load the new key into TOS
+      push bc
+      ld c,a
+      ld b,0
+      NEXT
+
+
+makeCodeWord(EMIT,"EMIT",FLAG_NORMAL)
+      ld a,c
+      pop bc
+      ; PutC doesn't mess with our registers. Yay!
+      bcall(_putc)
+      NEXT
+
+makeCodeWord(CR,"CR",FLAG_NORMAL)
+      push ix
+      push bc
+      push de
+      ; NewLine is a nasty routine... :(
+      bcall(_newline)
+      pop de
+      pop bc
+      pop ix
+      NEXT
+
+
+
+
+;# ------------------------------EXTERNAL FORTH ROUTINES:
+
+;# Our outer interpreter words:
+include(outer.z80)
+include(highlev.z80)
+
+
+
+
+;# ------------------------------FORTH SYSTEM CONSTANTS/VARIABLES:
+
+makeVar(STATE,"STATE",FLAG_NORMAL)
+;STATE_VAR:
+      .dw 0  ; Initially in interpret state
+
+makeConst(S0,"S0",FLAG_NORMAL)
+PSP_STACK_BASE:
+      .dw 0
+
+makeConst(R0,"R0",FLAG_NORMAL)
+RSP_STACK_BASE:
+      .dw 0
+
+makeVar(BASE,"BASE",FLAG_NORMAL)
+BASE_VAR:
+      .dw 10  ; Initially in base 10
+
+makeVar(H,"H",FLAG_NORMAL)
+USER_DICT_BASE:
+H_VAR:
+      .dw 0  ; Initially in interpret state
+
+;# !!IMPORTANT!!  THIS WORD MUST BE THE LAST ONE IN THE SYSTEM DICTIONARY!
+makeVar(L,"L",FLAG_NORMAL)
+L_VAR:
+      .dw LASTLINK
+      
+
+
+
+;# ------------------------------EXTERNAL ASSEMBLY ROUTINES:
+
+;# Dan Englender's excellent string routine (Modified).
+include(string.z80)
+
+
+
+.END
+;# ------------------------------EOF:

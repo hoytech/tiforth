@@ -1,0 +1,14 @@
+#!/bin/sh
+if test "$1" = ""; then
+  echo "Syntax: $0 <filename>"
+  exit
+fi
+
+ln -s /usr/local/bin/tasm80.tab ./tasm80.tab
+ln -s /usr/local/bin/ti83plus.inc ./ti83plus.inc
+
+if tasm -t80 -b -i $1.z80 $1.bin; then
+  bin8x --uppercase -i $1.bin -o $1.83p -n $1;
+fi
+
+rm -f $1.lst $1.bin ./tasm80.tab ./ti83plus.inc

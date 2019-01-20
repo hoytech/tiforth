@@ -1,0 +1,110 @@
+makeConst(ZERO,"0",FLAG_NORMAL)
+      .dw 0
+makeConst(NEGONE,"-1",FLAG_NORMAL)
+      .dw -1
+makeConst(ONE,"1",FLAG_NORMAL)
+      .dw 1
+makeConst(TWO,"2",FLAG_NORMAL)
+      .dw 2
+
+makeHighWord(ABS,"ABS",FLAG_NORMAL)
+      .dw C_DUP,C_ZERO,C_LT,C_FBRA,ABS_BYE
+      .dw C_NEGATE
+ABS_BYE:
+      DOEXIT
+
+
+
+;#----------------------CONDITIONALS:
+
+makeHighWord(IF,"IF",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_FBRA,C_HERE,C_ZERO,C_COMMA
+      DOEXIT
+
+makeHighWord(THEN,"THEN",FLAG_IMMEDIATE)
+      .dw C_HERE,C_SWAP,C_STORE
+      DOEXIT
+
+makeHighWord(ELSE,"ELSE",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_BRA,C_HERE,C_ZERO,C_COMMA
+      .dw C_SWAP,C_HERE,C_SWAP,C_STORE
+      DOEXIT
+
+
+
+;#----------------------LOOPING:
+
+makeHighWord(BEGIN,"BEGIN",FLAG_IMMEDIATE)
+      .dw C_HERE
+      DOEXIT
+
+makeHighWord(WHILE,"WHILE",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_TBRA,C_COMMA
+      DOEXIT
+
+makeHighWord(UNTIL,"UNTIL",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_FBRA,C_COMMA
+      DOEXIT
+
+makeHighWord(AGAIN,"AGAIN",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_BRA,C_COMMA
+      DOEXIT
+
+
+makeHighWord(DO,"DO",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_PARENDO,C_HERE
+      DOEXIT
+
+makeHighWord(LOOP,"LOOP",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_ONE,C_PLUSLOOP
+      DOEXIT
+
+makeHighWord(PLUSLOOP,"+LOOP",FLAG_IMMEDIATE)
+      .dw C_COMPILE,C_R_TO,C_COMPILE,C_PLUS,C_COMPILE,C_DUP,C_COMPILE,C_I
+      .dw C_COMPILE,C_EQUAL,C_COMPILE,C_SWAP,C_COMPILE,C_TO_R
+      .dw C_COMPILE,C_FBRA,C_COMMA
+      .dw C_COMPILE,C_R_TO,C_COMPILE,C_R_TO
+      .dw C_COMPILE,C_DROP,C_COMPILE,C_DROP
+      DOEXIT
+
+makeHighWord(PARENDO,"(DO)",FLAG_NORMAL)
+      .dw C_R_TO,C_ROT,C_SWAP,C_TO_R,C_TO_R,C_TO_R
+      DOEXIT
+
+
+;# FIXME: I think these RECURSE words might be bugged somehow... :(
+makeHighWord(RECURSE,"RECURSE",FLAG_IMMEDIATE)
+      .dw C_LAST,C_TO_CODE,C_COMMA
+      DOEXIT
+
+makeHighWord(TAILRECURSE,";RECURSE",FLAG_IMMEDIATE)
+      .dw C_LAST,C_TO_CODE,C_COMPILE,C_BRA,C_COMMA
+      DOEXIT
+
+
+;#----------------------STRINGS ETC:
+
+makeHighWord(ALLOT,"ALLOT",FLAG_NORMAL)
+      .dw C_H,C_PLUSSTORE
+      DOEXIT
+
+makeHighWord(DOTPAREN,".```('''",FLAG_NORMAL)
+      .dw C_LIT,')',C_PARSE,C_TYPE
+      DOEXIT
+
+makeHighWordLen(COMMAQUOTE,"```,'''\"",FLAG_NORMAL,2)
+      .dw C_HERE,C_LIT,34,C_PARSE,C_TUCK,C_HERE,C_SWAP,C_DUP,C_ALLOT,C_CMOVE
+      DOEXIT
+
+;# ( HERE LEN SRC-ADDR HERE LEN LEN ) <--- Before ALLOT
+
+makeHighWordLen(DOTQUOTE,".\"",FLAG_IMMEDIATE,2)
+      .dw C_SQUOTE,C_COMPILE,C_TYPE
+      DOEXIT
+
+makeHighWordLen(SQUOTE,"S\"",FLAG_IMMEDIATE,2)
+      .dw C_COMPILE,C_LIT,C_HERE,C_TO_R,C_COMPILE,0
+      .dw C_COMPILE,C_LIT,C_HERE,C_TO_R,C_COMPILE,0
+      .dw C_COMPILE,C_BRA,C_HERE,C_COMPILE,0
+      .dw C_COMMAQUOTE,C_R_TO,C_STORE,C_R_TO,C_STORE,C_HERE,C_SWAP,C_STORE
+      DOEXIT

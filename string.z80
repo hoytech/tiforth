@@ -1,0 +1,468 @@
+;This code has been derived from:
+
+;User Interface Guideline Sample Application (U1)
+;By Dan Englender (dan@calc.org).
+
+
+; *SINCE WE ARE INCLUDING THIS IN-LINE, WE DON'T NEED HEADERS, ETC...
+
+
+;.list
+;#define equ .equ
+;#define EQU .equ
+;#define end .end
+;#include ti83plus.inc
+;.nolist
+
+; Some useful macros
+;#define bcall(label) RST 28h \ .dw label
+
+
+
+;;TESTING ROUTINE:
+
+;      .org    $9D93   ; beginning of an 83+ application's memory
+;      .db     $BB,$6D ; 83+ magic numbers
+
+;      ld hl,buffer
+;      ld b,49
+;      call stringinput
+
+;      ld hl,buffer
+;      bcall(_puts)
+
+;      ret
+
+
+;buffer:
+;      .fill 50,0
+
+
+
+
+#define B_CALL(label) RST 28h \ .dw label
+
+;------------------------------------------------------------------
+;------------------------------------------------------------------
+;------------------------------------------------------------------
+;			String Input			
+;------------------------------------------------------------------
+;------------------------------------------------------------------
+;------------------------------------------------------------------
+;StringInput
+; Input
+;  HL points to where to save input
+;  B = max characters
+;  curRow,curCol = cursor location
+; Output
+;  HL is preserved
+;  BC = number of characters inputted
+
+
+StringInput:                         
+				;Input
+				;HL points to where to save input
+				;B = max characters
+				;curRow,curCol = cursor location
+				;Output
+				;HL is preserved
+				;BC = number of characters inputted
+
+	push	hl
+	ld	de,(curRow)
+	push	de
+	set	curAble,(IY+curFlags)
+	ld	c,b		;C = Backup of max chars
+	ld	d,0		;D = How many chars after current cursor location
+				; last inpuuted char is
+	ld	(hl),d      
+	ld	a,Lspace
+	ld	(curUnder),a  ;curUnder is the character that is shown during
+				; cursor blink
+	B_CALL(_PutMap)
+siLoop:
+	push	hl
+	push	de
+	push	bc
+       B_CALL(_GetKey)
+	pop	bc
+	pop	de
+	pop	hl
+	cp	kDel
+       jp     z,siDel              ;Delete a character
+	cp	kClear
+       jp     z,siClear            ;Clear entire prompt
+	cp	kEnter
+	jp	z,siEnter
+	cp	kLeft
+       jp     z,siLeft             ;Attempt to move left
+	cp	kRight
+       jp     z,siRight            ;Attempt to move right
+	cp	kDown
+       jp     z,siDown             ;Attempt to move down
+	cp	kUp
+       jp     z,siUp               ;Attempt to move up
+       cp     kSpace
+       jp     z,siSpace            ;Non-regular character: space
+       cp     kComma
+       jp     z,siComma            ;Non-regular character: comma
+
+;-----------FORTH'S ADDED KEYMAPS: Doug Hoyte added these in Feb, 2003-----------
+       cp     kLParen
+       jp     z,siLParen
+       cp     kRParen
+       jp     z,siRParen
+       cp     kAdd
+       jp     z,siAdd
+       cp     kSub
+       jp     z,siSub
+       cp     kMul
+       jp     z,siMul
+       cp     kDiv
+       jp     z,siDiv
+       cp     kRecall
+       jp     z,siRecall
+       cp     kColon
+       jp     z,siColon
+       cp     kQuest
+       jp     z,siQuest
+       cp     kQuote
+       jp     z,siQuote
+       cp     kStore
+       jp     z,siStore
+       cp     kInv
+       jp     z,siInv
+       cp     kI
+       jp     z,siI
+       cp     kDecPnt
+       jp     z,siDecPnt
+       cp     kLBrack
+       jp     z,siLBrack
+       cp     kRBrack
+       jp     z,siRBrack
+       cp     kLBrace
+       jp     z,siLBrace
+       cp     kRBrace
+       jp     z,siRBrace
+       cp     kEE
+       jp     z,siEE
+       cp     kChs
+       jp     z,siChs
+
+       ;# THIS ONE CALLS BACK TO THE "BYE" WORD!
+       cp     kQuit
+       jp     z,C_BYE
+
+       jr siEndOfForthKeys
+
+siLParen:
+       ld     a,'('
+       jp     siLetCont
+siRParen:
+       ld     a,')'
+       jp     siLetCont
+siAdd:
+       ld     a,'+'
+       jp     siLetCont
+siSub:
+       ld     a,'-'
+       jp     siLetCont
+siMul:
+       ld     a,'*'
+       jp     siLetCont
+siDiv:
+       ld     a,'/'
+       jp     siLetCont
+siRecall:
+       ld     a,'@'
+       jp     siLetCont
+siColon:
+       ld     a,':'
+       jp     siLetCont
+siQuest:
+       ld     a,'?'
+       jp     siLetCont
+siQuote:
+       ld     a,'"'
+       jp     siLetCont
+siStore:
+       ld     a,'!'
+       jp     siLetCont
+siInv:
+       ld     a,39d ; TICK
+       jp     siLetCont
+siI:
+       ld     a,59d ; SEMICOLON
+       jp     siLetCont
+siDecPnt:
+       ld     a,'.'
+       jp     siLetCont
+siLBrack:
+       ld     a,$c1 ; LEFT BRACKET... TI "redefined" this one, so...
+       jp     siLetCont
+siRBrack:
+       ld     a,']'
+       jp     siLetCont
+siLBrace:
+       ld     a,'<'
+       jp     siLetCont
+siRBrace:
+       ld     a,'>'
+       jp     siLetCont
+siEE:
+       ld     a,'='
+       jp     siLetCont
+siChs:
+       ld     a,'-'
+       jp     siLetCont
+
+
+siEndOfForthKeys:
+;-----------END OF FORTH'S ADDED KEYMAPS:----------------------------------------
+
+	sub	k0
+	cp	10
+       jp     c,siNumber           ;It's a number
+	sub	kCapA-k0
+	cp	26
+       jp     c,siLetter           ;It's a letter
+	jp	nz,siLoop   
+       ld     a,'X'-'A'            ;XT0n key
+       jp     siLetter
+siDel:					;Delete a character
+	inc	d
+	dec	d			;Are we at the end of the string?
+	jp	z,siLoop
+	push	de
+	push	bc
+	push	hl
+	ld	b,d
+	ld	de,(curRow)
+	push	de  
+	ld	d,h
+	ld	e,l
+	inc	de 
+	dec	b			;Are we deleting the last character?
+	ld	c,Lspace
+	jr	z,siDelLoopSkip  	;If so, we want to have curUnder=Lspace
+					; and we don't need to display shifted
+					; characters
+
+       ld     a,(de)               ;Else, we want curUnder=next character
+       ld     c,a                         
+
+siDelLoop:				;This loop displays all the remaining
+					; characters after the one we're deleting,
+					; but shifted back one position
+	ld	a,(de)
+	B_CALL(_PutC)
+	ld	(hl),a
+	inc	hl
+	inc	de
+	djnz	siDelLoop 
+siDelLoopSkip:
+       ld     (hl),0               ;Needs to be zero terminated, right?
+	ld	a,Lspace
+	B_CALL(_PutC)
+	ld	a,c
+	ld	(curUnder),a
+	pop	de
+	ld	(curRow),de
+	pop	hl
+	pop	bc
+	pop	de
+	dec	d
+	jp	siLoop
+
+siClear:				;Clear all characters
+	ld	a,c
+	sub	b
+	add	a,d
+	or	a			;Nothing to clear?
+	jp	z,siLoop
+	ld	e,d
+	ld	d,0
+	add	hl,de
+	ld	(hl),0			;Zero terminate current text
+	pop	de
+	ld	(curRow),de		;Restore original cursor location
+	pop	hl
+	push	bc
+	B_CALL(_StrLength)		;Get length of string
+	inc	c			;Need to erase cursor too
+	push	hl
+	push	de
+siClearLoop:				;Clear all previously entered text
+	ld	a,Lspace
+	B_CALL(_PutC)
+	dec	c
+	jr	nz,siClearLoop
+	pop	de
+	ld	(curRow),de
+	pop	hl
+	pop	bc
+	ld	b,c			;Restore backup of max # of chars
+	jp	StringInput 
+
+siEnter:
+	ld	a,(curUnder)
+	B_CALL(_PutMap)			;Display character under cursor, so we
+					; don't get a black box
+       ld     hl,curRow
+       dec    d
+       inc    d
+       jr     z,siEnterLoopSkip
+siEnterLoop:                       ;Updates cursor position to end
+       ld     a,(curCol)
+       inc    a
+       and    15
+       ld     (curCol),a
+       or     a
+       jr     nz,siEnterLoopCont
+       inc    (hl)
+siEnterLoopCont:
+       dec    d
+       jr     nz,siEnterLoop
+siEnterLoopSkip:
+	pop	de
+	pop	hl
+	B_CALL(_StrLength)		;Find string length
+	inc	bc  			;Add one for zero terminator
+	res	curAble,(IY+curFlags);Turn off cursor
+       ret                         ;The End!                                                        
+
+siNumber:                          ;A number key was pressed
+       add    a,L0                 ;Add number to '0'	                
+	jr	siLetCont  
+siLetter:                          ;A letter key was pressed
+       add    a,LcapA              ;Add letter number to 'A'
+siLetCont:
+	dec	b
+	inc	b			;Have we displayed the maximum # of
+					; characters?
+	jp	z,siLoop
+	ld	(hl),a 
+	B_CALL(_PutC)
+	inc	hl     
+	ld	a,d  
+	dec	d
+	dec	b
+	or	a
+	ld	a,(hl)
+	ld	(curUnder),a		;Reset curUnder to next character
+	jp	nz,siLoop
+	inc	d
+	ld	a,Lspace
+	ld	(curUnder),a      
+	ld	(hl),0
+	jp	siLoop
+siSpace:                           ;Space was pressed
+       ld     a,' '
+       jr     siLetCont
+siComma:                           ;Comma was pressed
+       ld     a,','
+       jr     siLetCont
+siLeft:				;Try to move left
+	ld	a,b
+	cp	c			;Are we all the way to the left?
+       jp     z,siLoop             ;If so, we can't go any further
+	inc	b
+	ld	a,d
+       inc    d			;We've moved farther away from the end
+	call	siLDAHL
+	B_CALL(_PutMap)
+	dec	hl
+	ld	a,(hl)
+       ld     (curUnder),a         ;Update curUnder
+	ld	a,(curCol)
+	dec	a			;Cursor location one to the left
+	ld	(curCol),a
+	jp	p,siLoop		;Jumps if there was no overflow			
+	ld	a,15
+	ld	(curCol),a
+	ld	a,(curRow)
+	dec	a
+	ld	(curRow),a
+	jp	siLoop 
+
+siUp: 					;Try to move up
+	ld	a,b
+	add	a,15
+	cp	c			;Have we typed more than 15 characters?
+	jp	nc,siLoop		;If not, we can't move up
+	ld	b,a  
+	inc	b
+	ld	a,d
+	add	a,16
+	ld	d,a
+	call	siLDAHL
+	B_CALL(_PutMap)
+	push	de
+	ld	de,16
+	sbc	hl,de			;Text pointer up a row (row=16 bytes)
+	pop	de
+	ld	a,(curRow)
+	dec	a			;Move cursor up a row
+	ld	(curRow),a
+	ld	a,(hl)  
+	ld	(curUnder),a
+	jp	siLoop    
+
+siLDAHL:
+					;Loads a character from (hl) and
+					; converts it to Lspace if it is 0
+	ld	a,(hl)
+	or	a
+	ret	nz
+	ld	a,Lspace
+	ret
+
+siDown:       			;Tries to move down     
+	ld	e,16
+	ld	a,d
+	sub	e			;Are there are least 16 after cursor?
+	jp	c,siLoop		; if not, we can't move down
+	ld	d,a
+	ld	a,b
+	sub	e
+	ld	b,a
+	ld	a,(hl)
+       B_CALL(_PutMap)               ;Make sure character under cursor is displayed
+	push	de
+	ld	d,0
+	add	hl,de
+	pop	de  
+	call	siLDAHL
+	ld	(curUnder),a
+	ld	a,(curRow)
+	inc	a
+	ld	(curRow),a
+	jp	siLoop
+
+siRight:				;Try to move right
+	ld	a,d
+	or	a			;Are there any more chars after cursor?
+       jp     z,siLoop             ;If not, we can't move right!
+	dec	b
+	ld	a,(hl)
+	B_CALL(_PutMap)
+	inc	hl
+	dec	d 
+	call	siLDAHL
+	ld	(curUnder),a 
+	ld	a,(curCol)
+	inc	a			;Move cursor over
+	ld	(curCol),a
+	cp	16			;Did we scroll?
+       jp     nz,siLoop            ;If not, we're all done here
+       xor    a                    ;Else we have to reset curCol
+	ld	(curCol),a
+	ld	a,(curRow)
+       inc    a                    ;And increment curRow
+	ld	(curRow),a
+	jp	siLoop
+
+;------------------------------------------------------------------
+
+
+;.end

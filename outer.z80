@@ -1,0 +1,360 @@
+
+
+makeHighWord(QUIT,"QUIT",FLAG_NORMAL)
+MAIN_ENTRANCE_POINT:
+      .dw C_RESET
+QUIT_LOOP:
+
+      ;# Only display OK if we're not compiling:
+      .dw C_STATE,C_FETCH,C_TBRA,QUIT_SKIP_DISPOK
+      .dw C_DISPOK
+QUIT_SKIP_DISPOK:
+      .dw C_CR
+
+      ;# Do the query:
+      .dw C_LIT,QUERY_BUFFER_BASE,C_LIT,QUERY_BUFFER_SIZE-1,C_EXPECT
+
+      ;# Reset CUR_PARSE_LOCATION
+      .dw C_LIT,QUERY_BUFFER_BASE,C_LIT,CUR_PARSE_LOCATION,C_STORE
+
+      .dw C_BL,C_EMIT
+
+QUIT_INTERPRET_LOOP:
+      ;# Check to see if there are any stack overflows:
+      .dw C_STACKS
+
+      ;# Parse the next word. If there is an available word, JP to CONT:
+      .dw C_LIT,' ',C_PARSE
+      .dw C_DUP,C_TBRA,QUIT_INTERPRET_CONT
+
+      ;# Since there's no available words, drop the parsed area and go back to top:
+      .dw C_2DROP,C_BRA,QUIT_LOOP
+
+QUIT_INTERPRET_CONT:
+      .dw C_INTERPRET
+
+      ;# Go back to top of INTERPRET loop:
+      .dw C_BRA,QUIT_INTERPRET_LOOP
+
+      ;# SHOULD NEVER GET HERE, SO NO DOEXIT NEEDED!
+
+
+
+
+makeHighWord(INTERPRET,"INTERPRET",FLAG_NORMAL)
+
+      .dw C_2DUP,C_FIND,C_DUP,C_TBRA,INTERPRET_WORD
+      .dw C_DROP,C_BRA,INTERPRET_NUMBER
+
+INTERPRET_WORD:
+
+      ;# Check if the word is immediate and execute it if it is:
+      .dw C_NIP,C_NIP,C_DUP,C_ISIMMED,C_TBRA,INTERPRET_EXEC
+
+      ;# Are we in compile state? If so, compile it:
+      .dw C_STATE,C_FETCH,C_TBRA,INTERPRET_COMPILE
+
+      ;# Otherwise, execute it:
+INTERPRET_EXEC:
+      .dw C_TO_CODE,C_EXECUTE
+      DOEXIT
+INTERPRET_COMPILE:
+      .dw C_TO_CODE,C_COMMA
+      DOEXIT
+
+INTERPRET_NUMBER:
+      .dw C_NUMBER
+
+      ;# Are we in compile state? If so, leave num on stack:
+      .dw C_STATE,C_FETCH,C_FBRA,INTERPRET_NUMBER_BYE
+
+      ;# Otherwise, compile it in:
+      .dw C_LIT,C_LIT,C_COMMA,C_COMMA
+
+
+INTERPRET_NUMBER_BYE:
+
+      DOEXIT
+
+
+
+makeHighWord(CREATE,"CREATE",FLAG_NORMAL)
+      ;# Compile link field and update L:
+      .dw C_HERE,C_L,C_FETCH,C_COMMA,C_L,C_STORE
+
+      ;# Compile default word flags:
+      .dw C_LIT,FLAG_NORMAL,C_CCOMMA
+
+      ;# Parse and compile the name field:   FIXME: ERROR CHECK THIS PARSE
+      .dw C_LIT,' ',C_PARSE,C_TUCK,C_DUP,C_CCOMMA
+      ;# ( n src-addr n )
+      .dw C_HERE,C_SWAP,C_CMOVE
+
+      ;# Increase H by n:
+      .dw C_H,C_PLUSSTORE
+
+      ;# Compile the first byte of the Z80 instruction "JP":
+      .dw C_LIT,$C3,C_CCOMMA
+
+      DOEXIT
+
+
+      ;# LBRACK, AKA "[" HAS TO BE EXPANDED BECAUSE OF TI'S LLAMA CHARSET...
+L_LBRACK:
+      .dw LASTLINK
+LASTLINK .set ($ - 2)
+      .db FLAG_IMMEDIATE
+      .db 1,$C1
+C_LBRACK:
+      jp C_DOCOLON
+      .dw C_ZERO,C_STATE,C_STORE
+      DOEXIT
+
+makeHighWord(RBRACK,"]",FLAG_NORMAL)
+      .dw C_ONE,C_STATE,C_STORE
+      DOEXIT
+
+
+makeHighWord(COLON,":",FLAG_NORMAL)
+      .dw C_CREATE,C_RBRACK,C_LIT,C_DOCOLON,C_COMMA
+      DOEXIT
+
+makeHighWord(SEMICOLON,";",FLAG_IMMEDIATE)
+      .dw C_LBRACK,C_LIT,C_EXIT,C_COMMA
+      DOEXIT
+
+
+
+
+;#  ( addr u -- addr|0 )
+makeHighWord(FIND,"FIND",FLAG_NORMAL)
+      .dw C_L
+
+FIND_LOOP:
+      .dw C_FETCH
+      .dw C_DUP,C_FBRA,FIND_NO
+      .dw C_WORDCMP,C_TBRA,FIND_YES
+      .dw C_BRA,FIND_LOOP
+
+FIND_YES:
+      .dw C_NIP,C_NIP
+      DOEXIT
+FIND_NO:
+      .dw C_2DROP,C_DROP,C_ZERO
+      DOEXIT
+
+makeHighWord(TICK,"'",FLAG_NORMAL)
+      .dw C_BL,C_PARSE,C_FIND
+      DOEXIT
+
+
+;#  ( addr u addr-of-word -- addr u addr-of-word bool )
+makeHighWord(WORDCMP,"WORDCMP",FLAG_NORMAL)
+      .dw C_2DUP,C_1PLUS,C_1PLUS,C_1PLUS,C_CFETCH
+      .dw C_EQUAL,C_FBRA,WORDCMP_BAD_LEN
+
+      ;# Now we have:  ( addr u addr-of-word )
+      .dw C_3DUP,C_1PLUS,C_1PLUS,C_1PLUS,C_1PLUS,C_SWAP
+      ;# Now we have:  ( addr u addr-of-word addr addr-of-word's-name u )
+
+      .dw C_S_EQUAL
+      DOEXIT
+
+WORDCMP_BAD_LEN:
+      .dw C_ZERO
+      DOEXIT
+
+
+
+;# DE -> COUNT  HL -> ADDR  BC -> DELIM
+makeCodeWord(PARSE,"PARSE",FLAG_NORMAL)
+
+      ld hl,(CUR_PARSE_LOCATION)
+      ld b,0
+      push de
+      ld de,0
+
+;# Skip leading delimiters:
+PARSE_LOOP_1:
+      ld a,(hl)
+      cp 0
+      jr z,PARSE_BYE
+      cp c
+      jr nz,PARSE_LOOP_2
+
+      inc hl
+      jr PARSE_LOOP_1
+
+;# Count characters:
+PARSE_LOOP_2:
+      ld a,(hl)
+      cp 0
+      jr z,PARSE_BYE
+      cp c
+      jr z,PARSE_BYE
+
+      inc hl
+      inc de
+      jr PARSE_LOOP_2
+
+PARSE_BYE:
+
+      ld b,d
+      ld c,e
+
+      ld a,(hl)
+      cp 0
+      jr z,PARSE_BYE2
+
+      inc hl
+      ld (CUR_PARSE_LOCATION),hl
+      dec hl
+      jr PARSE_BYE3
+
+PARSE_BYE2:
+      ld (CUR_PARSE_LOCATION),hl
+PARSE_BYE3:
+
+      sbc hl,de
+      pop de
+      push hl
+      NEXT
+
+
+
+
+;# ( addr u -- n )
+;# FIXME: This is hardcoded to base 10 now. It ought to listen to BASE.
+makeHighWord(NUMBER,"NUMBER",FLAG_NORMAL)
+
+      ;# Backup the name in case we need it for an errmsg.
+      .dw C_2DUP
+
+      ;# Is the first byte a '-'?
+      .dw C_OVER,C_CFETCH,C_LIT,'-',C_EQUAL,C_FBRA,NUMBER_NORMAL_SIGN
+
+      ;# If so, put -1 in the sign, decrease u and increase addr
+      .dw C_NEGONE,C_NUMSIGN,C_STORE
+      .dw C_1MINUS,C_SWAP,C_1PLUS,C_SWAP
+      .dw C_BRA,NUMBER_DO_IT
+NUMBER_NORMAL_SIGN:
+      .dw C_ONE,C_NUMSIGN,C_STORE
+NUMBER_DO_IT:
+      .dw C_ZERO,C_NUMACC,C_STORE
+
+NUMBER_LOOP:
+      ;# If we're at the end of our string, get outta here:
+      .dw C_DUP,C_FBRA,NUMBER_DONE
+
+      ;# Shift the decimal place over 1 to the left:
+      .dw C_NUMACC,C_FETCH,C_LIT,10,C_MULT,C_NUMACC,C_STORE
+
+      ;# Get the next character and get it so that '0' -> 0:
+      .dw C_OVER,C_CFETCH,C_LIT,'0',C_MINUS
+
+      ;# Check to make sure this is a valid digit:
+      .dw C_DUP,C_LIT,9,C_GT,C_TBRA,NUMBER_BAD
+      .dw C_DUP,C_LIT,0,C_LT,C_TBRA,NUMBER_BAD
+
+      ;# Add it to NUMACC
+      .dw C_NUMACC,C_PLUSSTORE
+      ;.dw C_NUMACC,C_FETCH,C_PLUS,C_NUMACC,C_STORE
+
+      .dw C_1MINUS,C_SWAP,C_1PLUS,C_SWAP
+      .dw C_BRA,NUMBER_LOOP
+
+NUMBER_DONE:
+      .dw C_2DROP,C_2DROP
+      .dw C_NUMACC,C_FETCH,C_NUMSIGN,C_FETCH,C_MULT
+      DOEXIT
+NUMBER_BAD:
+      .dw C_2DROP,C_CR,C_BL,C_EMIT,C_BL,C_EMIT,C_ZTYPE,C_LIT,'?',C_BL,C_EMIT,C_EMIT
+      .dw C_QUIT
+
+makeVar(NUMACC,"NUMACC",FLAG_NORMAL)
+      .dw 0
+makeVar(NUMSIGN,"NUMSIGN",FLAG_NORMAL)
+      .dw 0
+
+
+
+makeHighWord(HEX,"HEX",FLAG_NORMAL)
+      .dw C_LIT,16,C_BASE,C_STORE
+      DOEXIT
+makeHighWord(DECIMAL,"DECIMAL",FLAG_NORMAL)
+      .dw C_LIT,10,C_BASE,C_STORE
+      DOEXIT
+makeHighWord(OCTAL,"OCTAL",FLAG_NORMAL)
+      .dw C_LIT,8,C_BASE,C_STORE
+      DOEXIT
+makeHighWord(BINARY,"BINARY",FLAG_NORMAL)
+      .dw C_LIT,2,C_BASE,C_STORE
+      DOEXIT
+
+
+makeHighWord(PNUM,"PNUM",FLAG_NORMAL)
+
+      ;# If num is less than 0, print sign and negate number:
+      .dw C_DUP,C_ZERO,C_LT,C_FBRA,PNUM_SKIP_SIGN
+      .dw C_LIT,'-',C_EMIT,C_NEGATE
+
+PNUM_SKIP_SIGN:
+      .dw C_NEGONE,C_SWAP
+
+PNUM_BUILD_LOOP:
+      .dw C_BASE,C_FETCH,C_SLASHMOD
+      .dw C_DUP,C_TBRA,PNUM_BUILD_LOOP
+
+      .dw C_DROP
+PNUM_EMIT_LOOP:
+
+      .dw C_DUP,C_LIT,9,C_GT,C_TBRA,PNUM_EXTENDED_BASE
+
+      .dw C_LIT,'0',C_BRA,PNUM_EMIT_LOOP_CONT
+PNUM_EXTENDED_BASE:
+      .dw C_LIT,'A'-10
+
+PNUM_EMIT_LOOP_CONT:
+
+      .dw C_PLUS,C_EMIT
+
+      .dw C_DUP,C_NEGONE,C_EQUAL,C_FBRA,PNUM_EMIT_LOOP
+      .dw C_DROP
+
+      DOEXIT
+
+
+
+makeHighWord(DOT,".",FLAG_NORMAL)
+      .dw C_PNUM,C_BL,C_EMIT
+      DOEXIT
+
+
+
+makeCodeWord(EXPECT,"EXPECT",FLAG_NORMAL)
+
+      pop hl
+      push de
+
+      ld b,c
+      ld c,0
+      call StringInput
+
+      pop de
+      pop bc
+      
+      NEXT
+
+
+
+makeCodeWord(DISPOK,"DISPOK",FLAG_NORMAL)
+      ld hl,OK_TEXT
+      bcall(_puts)
+      NEXT
+
+
+
+CUR_PARSE_LOCATION:
+      .dw 0
+OK_TEXT:
+      .db "  OK",0

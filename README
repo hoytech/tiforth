@@ -1,0 +1,21 @@
+This is a beta version of HCSW's TI-83 onboard forth compiler/interpreter.
+
+There are a few deficiencies that prevent it from being as useful as it could
+be.
+
+Requires TASM, m4, and bin8x to be installed if you want to compile.
+You will probably need to edit tcompile to point to your tasm80.tab and ti83plus.inc files.
+
+TODO:
+
+* Make it a flash app
+* Add support for loading from a "file"
+* Replace the code in string.z80 with a more flexible routine (that can load from a file and so on)
+* DOCUMENT THE CODE
+
+
+
+Good luck with this code,
+
+Doug Hoyte (Fractal)
+www.hcsw.org
